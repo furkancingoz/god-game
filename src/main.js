@@ -5,12 +5,14 @@ import { GodHand } from './input/GodHand.js';
 import { FollowerSystem } from './followers/FollowerSystem.js';
 import { FaithSystem } from './faith/FaithSystem.js';
 import { MiracleSystem } from './miracles/MiracleSystem.js';
-import { OceanSystem } from './environment/OceanSystem.js';
-import { EnvironmentSystem } from './environment/EnvironmentSystem.js';
-import { BuildingSystem } from './buildings/BuildingSystem.js';
+import { ShoreWater } from './environment/WaterShader.js';
+import { DivineAltarSystem, StylizedTreeSystem } from './environment/StylizedModels.js';
+import { StylizedBuildingSystem } from './buildings/StylizedBuildingSystem.js';
 import { ResourceSystem } from './economy/ResourceSystem.js';
 import { FarmSystem } from './environment/FarmSystem.js';
 import { WeatherSystem } from './weather/WeatherSystem.js';
+import { PostProcessingPipeline } from './graphics/PostProcessing.js';
+import { FloatingTextManager } from './ui/FloatingText.js';
 import { soundEngine } from './audio/SoundEngine.js';
 import { HUD } from './ui/HUD.js';
 import { FollowerInspector } from './ui/FollowerInspector.js';
@@ -33,8 +35,12 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.05;
+renderer.toneMappingExposure = 1.08;
 document.body.appendChild(renderer.domElement);
+
+// Setup Post-Processing (Bloom + Color Grading)
+const postProcessing = new PostProcessingPipeline({ renderer, scene, camera });
+const floatingTextManager = new FloatingTextManager({ scene, camera });
 
 // Setup Lighting System
 const hemiLight = new THREE.HemisphereLight(0xb1e0ff, 0x544026, 0.7);
@@ -55,27 +61,21 @@ sunLight.shadow.camera.bottom = -d;
 sunLight.shadow.bias = -0.0005;
 scene.add(sunLight);
 
-// Initialize Weather (Day/Night) & Economy
+// Initialize Weather & Economy
 const weatherSystem = new WeatherSystem({ scene, sunLight, hemiLight });
 const resourceSystem = new ResourceSystem();
 
-// Initialize Terrain & World Environment
+// Initialize Terrain & Environment
 const terrain = new TerrainSystem({ seed: 7 });
 scene.add(terrain.mesh);
 
-const ocean = new OceanSystem({ scene, worldSize: 50 });
-const environment = new EnvironmentSystem({ scene, terrain, treeCount: 70, rockCount: 35 });
+const water = new ShoreWater({ scene, worldSize: 50 });
+const treeSystem = new StylizedTreeSystem({ scene, terrain, treeCount: 80 });
 const farmSystem = new FarmSystem({ scene, terrain });
-const buildingSystem = new BuildingSystem({ scene, terrain });
+const buildingSystem = new StylizedBuildingSystem({ scene, terrain });
 
-// Shrine at island center
-const shrineGeometry = new THREE.CylinderGeometry(1.2, 1.6, 2.2, 8);
-const shrineMaterial = new THREE.MeshStandardMaterial({ color: 0xe0c388, roughness: 0.3, metalness: 0.2, flatShading: true });
-const shrineMesh = new THREE.Mesh(shrineGeometry, shrineMaterial);
-shrineMesh.position.set(0, terrain.getHeightAt(0, 0) + 1.1, 0);
-shrineMesh.castShadow = true;
-shrineMesh.receiveShadow = true;
-scene.add(shrineMesh);
+// Divine Altar with floating rotating crystal
+const altarSystem = new DivineAltarSystem({ scene, terrain });
 
 const cameraRig = new CameraRig(camera, renderer.domElement);
 const godHand = new GodHand({ camera, domElement: renderer.domElement, terrain, scene });
@@ -101,8 +101,8 @@ const hud = new HUD(
     soundEngine.playButtonClick();
     const powerNames = {
       sculpt: 'Şekillendirme Modu: Sol tık yükseltir, Shift+tık alçaltır.',
-      rain: 'Bereket Yağmuru: Tıkladığın yere bolluk getirir.',
-      sun: 'Kutsal Güneş: İbadet hızını artırır ve ruhları iyileştirir.',
+      rain: 'Bereket Yağmuru: Toprağı sular ve tarlalarda ekin yetiştirir.',
+      sun: 'Kutsal Güneş: İbadet hızını artırır.',
       fire: 'İlahi Ateş: Yakıcı ateş indirir, inancı katlar.',
       bless: 'Köy Kutsaması: Düz arazide yeni bir yerleşim yeri oluşturur.',
       meteor: 'Göktaşı Çarpması: Yıkıcı bir göktaşı indirir.',
@@ -163,18 +163,22 @@ renderer.domElement.addEventListener('pointerdown', (event) => {
     miracleSystem.castRainAt(targetPoint);
     faithSystem.addFaith(10);
     resourceSystem.addFood(15);
+    floatingTextManager.spawnText(targetPoint, '+10 İnanç ✨', '#ffd700');
     hud.showNotification("Bereket Yağmuru indirildi! Toprak canlanıyor.");
   } else if (godHand.activePower === 'sun') {
     miracleSystem.castSunbeamAt(targetPoint);
     faithSystem.addFaith(15);
+    floatingTextManager.spawnText(targetPoint, '+15 İnanç ✨', '#ffd700');
     hud.showNotification("Kutsal Güneş ışını indirildi!");
   } else if (godHand.activePower === 'fire') {
     miracleSystem.castFireAt(targetPoint);
     faithSystem.addFaith(25);
+    floatingTextManager.spawnText(targetPoint, '+25 İnanç 🔥', '#ff4500');
     hud.showNotification("İlahi Ateş gazabı indirildi!");
   } else if (godHand.activePower === 'meteor') {
     miracleSystem.castMeteorAt(targetPoint);
     faithSystem.addFaith(40);
+    floatingTextManager.spawnText(targetPoint, '+40 İnanç ☄️', '#ff3300');
     hud.showNotification("Gökyüzünden devasa bir göktaşı indirildi!");
   } else if (godHand.activePower === 'bless') {
     if (resourceSystem.canAfford({ wood: 10 })) {
@@ -183,6 +187,7 @@ renderer.domElement.addEventListener('pointerdown', (event) => {
         resourceSystem.consume({ wood: 10 });
         faithSystem.addFaith(30);
         farmSystem.createFarmPlot(targetPoint.x + 2, targetPoint.z + 2);
+        floatingTextManager.spawnText(targetPoint, '+30 İnanç 🏠', '#38b6ff');
         hud.showNotification("Köylüler yeni bir kulübe ve buğday tarlası kurdu!");
       } else {
         hud.showNotification("Kulübe için karada ve uygun bir alan seçmelisin.");
@@ -197,10 +202,10 @@ window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
+  postProcessing.setSize(window.innerWidth, window.innerHeight);
 });
 
 const clock = new THREE.Clock();
-const initialCamPos = camera.position.clone();
 
 function animate() {
   requestAnimationFrame(animate);
@@ -210,7 +215,7 @@ function animate() {
 
   cameraRig.update();
 
-  // Screen shake application
+  // Screen shake
   if (miracleSystem.screenShakeIntensity > 0) {
     const shake = miracleSystem.screenShakeIntensity;
     camera.position.x += (Math.random() * 2 - 1) * shake;
@@ -219,19 +224,17 @@ function animate() {
 
   if (timeScale > 0) {
     weatherSystem.update(dt);
-    ocean.update(time);
-    environment.update(time);
+    water.update(time);
+    treeSystem.update(time);
+    altarSystem.update(time);
     farmSystem.update(dt);
     buildingSystem.update(dt);
     followerSystem.update(dt);
     miracleSystem.update(dt);
+    floatingTextManager.update(dt);
 
-    // Dynamic resource collection
     resourceSystem.addWood(dt * 0.1);
     resourceSystem.addFood(dt * 0.15);
-
-    // Shrine position update on terrain sculpt
-    shrineMesh.position.y = terrain.getHeightAt(0, 0) + 1.1;
 
     const worshippers = followerSystem.getWorshipperCount();
     faithSystem.tick(worshippers, dt);
@@ -249,6 +252,7 @@ function animate() {
     timeString: weatherSystem.getTimeFormatted(),
   });
 
-  renderer.render(scene, camera);
+  // Render via EffectComposer Post-Processing Pipeline (Bloom + Glow)
+  postProcessing.render();
 }
 animate();
