@@ -1,12 +1,15 @@
 import * as THREE from 'three';
 import { isWithinRadius, RAIN_DURATION_SECONDS, RAIN_RADIUS, RAIN_FAITH_MULTIPLIER } from './miracleLogic.js';
+import { soundEngine } from '../audio/SoundEngine.js';
 
 export class MiracleSystem {
-  constructor({ scene, terrain, buildingSystem }) {
+  constructor({ scene, terrain, buildingSystem, farmSystem }) {
     this.scene = scene;
     this.terrain = terrain;
     this.buildingSystem = buildingSystem;
-    this.activeRain = null; // { center: {x, z}, remaining: number }
+    this.farmSystem = farmSystem;
+    this.activeRain = null;
+    this.screenShakeIntensity = 0;
 
     // Rain particles
     this.particleCount = 400;
@@ -18,7 +21,7 @@ export class MiracleSystem {
     this.rainParticles.visible = false;
     scene.add(this.rainParticles);
 
-    // Sunbeam visual (Cylinder light beam)
+    // Sunbeam visual
     const sunBeamGeo = new THREE.CylinderGeometry(3.5, 4.5, 30, 16, 1, true);
     const sunBeamMat = new THREE.MeshBasicMaterial({ color: 0xffe066, transparent: true, opacity: 0, side: THREE.DoubleSide });
     this.sunBeamMesh = new THREE.Mesh(sunBeamGeo, sunBeamMat);
@@ -26,7 +29,7 @@ export class MiracleSystem {
     scene.add(this.sunBeamMesh);
     this.sunBeamTimer = 0;
 
-    // Divine Fire / Smite particles
+    // Fire particles
     const firePositions = new Float32Array(200 * 3);
     const fireGeo = new THREE.BufferGeometry();
     fireGeo.setAttribute('position', new THREE.BufferAttribute(firePositions, 3));
@@ -35,6 +38,14 @@ export class MiracleSystem {
     this.fireParticles.visible = false;
     scene.add(this.fireParticles);
     this.fireTimer = 0;
+
+    // Meteor Falling Rock
+    const meteorGeo = new THREE.DodecahedronGeometry(1.4, 1);
+    const meteorMat = new THREE.MeshStandardMaterial({ color: 0xff3300, emissive: 0xcc1100, roughness: 0.4 });
+    this.meteorMesh = new THREE.Mesh(meteorGeo, meteorMat);
+    this.meteorMesh.visible = false;
+    scene.add(this.meteorMesh);
+    this.meteorTarget = null;
   }
 
   castRainAt(point) {
@@ -52,13 +63,19 @@ export class MiracleSystem {
       );
     }
     positions.needsUpdate = true;
+
+    if (this.farmSystem) {
+      this.farmSystem.boostGrowthNear(point, RAIN_RADIUS);
+    }
+    soundEngine.playMiracleChime();
   }
 
   castSunbeamAt(point) {
     const y = this.terrain.getHeightAt(point.x, point.z);
     this.sunBeamMesh.position.set(point.x, y + 15, point.z);
     this.sunBeamMesh.visible = true;
-    this.sunBeamTimer = 4.0; // 4 seconds
+    this.sunBeamTimer = 4.0;
+    soundEngine.playMiracleChime();
   }
 
   castFireAt(point) {
@@ -77,11 +94,25 @@ export class MiracleSystem {
       );
     }
     positions.needsUpdate = true;
+    soundEngine.playThunder();
+  }
+
+  castMeteorAt(point) {
+    const startY = 40;
+    this.meteorMesh.position.set(point.x + 10, startY, point.z + 10);
+    this.meteorMesh.visible = true;
+    const groundY = this.terrain.getHeightAt(point.x, point.z);
+    this.meteorTarget = { x: point.x, y: groundY, z: point.z, progress: 0 };
+    soundEngine.playThunder();
   }
 
   castBlessingAt(point) {
     if (this.buildingSystem) {
-      this.buildingSystem.buildHutAt(point.x, point.z);
+      const hut = this.buildingSystem.buildHutAt(point.x, point.z);
+      if (hut) {
+        if (this.farmSystem) this.farmSystem.createFarmPlot(point.x + 2, point.z + 2);
+        soundEngine.playBuildingConstruct();
+      }
     }
   }
 
@@ -103,30 +134,31 @@ export class MiracleSystem {
       }
     }
 
-    // Update Sunbeam
-    if (this.sunBeamTimer > 0) {
-      this.sunBeamTimer -= dt;
-      const opacity = Math.sin((this.sunBeamTimer / 4.0) * Math.PI) * 0.45;
-      this.sunBeamMesh.material.opacity = Math.max(0, opacity);
-      this.sunBeamMesh.rotation.y += dt * 0.5;
-      if (this.sunBeamTimer <= 0) {
-        this.sunBeamMesh.visible = false;
+    // Update Meteor Fall
+    if (this.meteorTarget) {
+      this.meteorTarget.progress += dt * 1.5;
+      const t = this.meteorTarget.progress;
+
+      const currentX = THREE.MathUtils.lerp(this.meteorMesh.position.x, this.meteorTarget.x, dt * 6);
+      const currentY = THREE.MathUtils.lerp(this.meteorMesh.position.y, this.meteorTarget.y, dt * 6);
+      const currentZ = THREE.MathUtils.lerp(this.meteorMesh.position.z, this.meteorTarget.z, dt * 6);
+
+      this.meteorMesh.position.set(currentX, currentY, currentZ);
+      this.meteorMesh.rotation.x += dt * 5;
+
+      if (currentY <= this.meteorTarget.y + 0.5 || t >= 1.0) {
+        // Impact!
+        this.terrain.lower(this.meteorTarget.x, this.meteorTarget.z, 5, 0.4);
+        this.meteorMesh.visible = false;
+        this.screenShakeIntensity = 0.6;
+        soundEngine.playThunder();
+        this.meteorTarget = null;
       }
     }
 
-    // Update Fire
-    if (this.fireTimer > 0) {
-      this.fireTimer -= dt;
-      const positions = this.fireParticles.geometry.attributes.position;
-      for (let i = 0; i < 200; i++) {
-        let y = positions.getY(i) + dt * 2.5;
-        if (y > 3) y = 0;
-        positions.setY(i, y);
-      }
-      this.fireParticles.geometry.attributes.position.needsUpdate = true;
-      if (this.fireTimer <= 0) {
-        this.fireParticles.visible = false;
-      }
+    // Screen Shake Decay
+    if (this.screenShakeIntensity > 0) {
+      this.screenShakeIntensity = Math.max(0, this.screenShakeIntensity - dt * 2.0);
     }
   }
 

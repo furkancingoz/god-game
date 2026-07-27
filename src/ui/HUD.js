@@ -1,9 +1,11 @@
 import { formatFaith } from '../faith/FaithSystem.js';
 
 export class HUD {
-  constructor(container, onSelectPower) {
+  constructor(container, onSelectPower, onOpenSpellbook, onSpeedChange) {
     this.container = container;
     this.onSelectPower = onSelectPower;
+    this.onOpenSpellbook = onOpenSpellbook;
+    this.onSpeedChange = onSpeedChange;
     this.activePower = 'sculpt';
 
     this.container.innerHTML = `
@@ -12,9 +14,15 @@ export class HUD {
         <div class="hud-card faith-card">
           <div class="stat-icon">✨</div>
           <div class="stat-info">
-            <span class="stat-label">İNAÇ PUANI</span>
+            <span class="stat-label">İNAÇ</span>
             <span class="stat-value" data-role="faith">0</span>
           </div>
+        </div>
+
+        <div class="hud-card res-card">
+          <div class="res-item" title="Odun">🪵 <span data-role="wood">25</span></div>
+          <div class="res-item" title="Yiyecek">🌾 <span data-role="food">30</span></div>
+          <div class="res-item" title="Taş">🪨 <span data-role="stone">10</span></div>
         </div>
 
         <div class="hud-card level-card">
@@ -33,6 +41,18 @@ export class HUD {
             <span class="stat-value" data-role="population">0</span>
           </div>
         </div>
+
+        <!-- Clock & Controls -->
+        <div class="hud-card clock-card">
+          <span class="clock-val" data-role="clock">12:00</span>
+          <div class="time-btns">
+            <button data-speed="0">⏸️</button>
+            <button data-speed="1" class="active">▶️</button>
+            <button data-speed="2">⏩</button>
+          </div>
+        </div>
+
+        <button class="hud-card spellbook-btn" id="open-spellbook" title="Mucize Kitabı">📖</button>
       </div>
 
       <!-- Toast Notifications -->
@@ -69,33 +89,59 @@ export class HUD {
           <span class="btn-name">Kutsama</span>
           <span class="btn-key">5</span>
         </button>
+
+        <button class="dock-btn" data-power="meteor" title="Göktaşı Çarpması (Kısayol: 6)">
+          <span class="btn-icon">☄️</span>
+          <span class="btn-name">Göktaşı</span>
+          <span class="btn-key">6</span>
+        </button>
       </div>
     `;
 
     this.faithEl = this.container.querySelector('[data-role="faith"]');
+    this.woodEl = this.container.querySelector('[data-role="wood"]');
+    this.foodEl = this.container.querySelector('[data-role="food"]');
+    this.stoneEl = this.container.querySelector('[data-role="stone"]');
     this.populationEl = this.container.querySelector('[data-role="population"]');
     this.tierTitleEl = this.container.querySelector('[data-role="tier-title"]');
     this.tierProgressEl = this.container.querySelector('[data-role="tier-progress"]');
+    this.clockEl = this.container.querySelector('[data-role="clock"]');
     this.toastEl = this.container.querySelector('#toast-banner');
 
     // Attach click listeners to dock buttons
     this.dockButtons = this.container.querySelectorAll('.dock-btn');
     this.dockButtons.forEach((btn) => {
-      btn.addEventListener('click', (e) => {
+      btn.addEventListener('click', () => {
         const power = btn.getAttribute('data-power');
         this.setActivePower(power);
       });
     });
 
-    // Keyboard shortcuts 1-5
+    // Time speed buttons
+    const speedBtns = this.container.querySelectorAll('.time-btns button');
+    speedBtns.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        speedBtns.forEach((b) => b.classList.remove('active'));
+        btn.classList.add('active');
+        const speed = parseFloat(btn.getAttribute('data-speed'));
+        if (this.onSpeedChange) this.onSpeedChange(speed);
+      });
+    });
+
+    // Open Spellbook
+    this.container.querySelector('#open-spellbook').addEventListener('click', () => {
+      if (this.onOpenSpellbook) this.onOpenSpellbook();
+    });
+
+    // Keyboard shortcuts 1-6
     window.addEventListener('keydown', (e) => {
-      const keyToPower = { '1': 'sculpt', '2': 'rain', '3': 'sun', '4': 'fire', '5': 'bless' };
+      const keyToPower = { '1': 'sculpt', '2': 'rain', '3': 'sun', '4': 'fire', '5': 'bless', '6': 'meteor' };
       if (keyToPower[e.key]) {
         this.setActivePower(keyToPower[e.key]);
       }
     });
 
-    this.showNotification("Ada uyandı! Takipçilerini gözet ve inanç topla.", 4000);
+    this.showNotification("Adada yaşam başladı! Takipçilerini gözet.", 4000);
   }
 
   setActivePower(power) {
@@ -119,9 +165,15 @@ export class HUD {
     }, duration);
   }
 
-  update({ faith, population, worshippers, hutCount = 0 }) {
+  update({ faith, population, worshippers, resources, timeString }) {
     this.faithEl.textContent = formatFaith(faith);
     this.populationEl.textContent = `${population} (${worshippers} İbadette)`;
+    if (resources) {
+      this.woodEl.textContent = Math.floor(resources.wood);
+      this.foodEl.textContent = Math.floor(resources.food);
+      this.stoneEl.textContent = Math.floor(resources.stone);
+    }
+    if (timeString) this.clockEl.textContent = timeString;
 
     // Tier calculation
     let tierName = 'PEYGAMBER';

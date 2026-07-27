@@ -8,7 +8,13 @@ import { MiracleSystem } from './miracles/MiracleSystem.js';
 import { OceanSystem } from './environment/OceanSystem.js';
 import { EnvironmentSystem } from './environment/EnvironmentSystem.js';
 import { BuildingSystem } from './buildings/BuildingSystem.js';
+import { ResourceSystem } from './economy/ResourceSystem.js';
+import { FarmSystem } from './environment/FarmSystem.js';
+import { WeatherSystem } from './weather/WeatherSystem.js';
+import { soundEngine } from './audio/SoundEngine.js';
 import { HUD } from './ui/HUD.js';
+import { FollowerInspector } from './ui/FollowerInspector.js';
+import { SpellbookModal } from './ui/SpellbookModal.js';
 
 // Setup Scene & Atmosphere
 const scene = new THREE.Scene();
@@ -49,12 +55,17 @@ sunLight.shadow.camera.bottom = -d;
 sunLight.shadow.bias = -0.0005;
 scene.add(sunLight);
 
-// Initialize Game Systems
+// Initialize Weather (Day/Night) & Economy
+const weatherSystem = new WeatherSystem({ scene, sunLight, hemiLight });
+const resourceSystem = new ResourceSystem();
+
+// Initialize Terrain & World Environment
 const terrain = new TerrainSystem({ seed: 7 });
 scene.add(terrain.mesh);
 
 const ocean = new OceanSystem({ scene, worldSize: 50 });
 const environment = new EnvironmentSystem({ scene, terrain, treeCount: 70, rockCount: 35 });
+const farmSystem = new FarmSystem({ scene, terrain });
 const buildingSystem = new BuildingSystem({ scene, terrain });
 
 // Shrine at island center
@@ -70,39 +81,89 @@ const cameraRig = new CameraRig(camera, renderer.domElement);
 const godHand = new GodHand({ camera, domElement: renderer.domElement, terrain, scene });
 const followerSystem = new FollowerSystem({ scene, terrain, count: 24, shrinePosition: { x: 0, z: 0 } });
 const faithSystem = new FaithSystem();
-const miracleSystem = new MiracleSystem({ scene, terrain, buildingSystem });
+const miracleSystem = new MiracleSystem({ scene, terrain, buildingSystem, farmSystem });
 
-let hud;
-
-// Wire Divine Power Selector
-hud = new HUD(document.getElementById('hud'), (power) => {
-  godHand.setPower(power);
-  const powerNames = {
-    sculpt: 'Şekillendirme Modu: Sol tık yükseltir, Shift+tık alçaltır.',
-    rain: 'Bereket Yağmuru: Tıkladığın yere bolluk getirir.',
-    sun: 'Kutsal Güneş: İbadet hızını artırır ve ruhları iyileştirir.',
-    fire: 'İlahi Ateş: Yakıcı ateş indirir, inancı katlar.',
-    bless: 'Köy Kutsaması: Düz arazide yeni bir yerleşim yeri oluşturur.',
-  };
-  hud.showNotification(powerNames[power]);
+// Setup Modals & HUD
+const followerInspector = new FollowerInspector(document.body, (follower) => {
+  followerSystem.makeProphet(follower);
+  soundEngine.playMiracleChime();
+  hud.showNotification(`${follower.name} köylüsü senin ilahi PEYGAMBERİN ilan edildi! ✨`);
 });
 
-// Pointer click handler for non-drag miracles
+const spellbookModal = new SpellbookModal(document.body);
+
+let timeScale = 1.0;
+
+const hud = new HUD(
+  document.getElementById('hud'),
+  (power) => {
+    godHand.setPower(power);
+    soundEngine.playButtonClick();
+    const powerNames = {
+      sculpt: 'Şekillendirme Modu: Sol tık yükseltir, Shift+tık alçaltır.',
+      rain: 'Bereket Yağmuru: Tıkladığın yere bolluk getirir.',
+      sun: 'Kutsal Güneş: İbadet hızını artırır ve ruhları iyileştirir.',
+      fire: 'İlahi Ateş: Yakıcı ateş indirir, inancı katlar.',
+      bless: 'Köy Kutsaması: Düz arazide yeni bir yerleşim yeri oluşturur.',
+      meteor: 'Göktaşı Çarpması: Yıkıcı bir göktaşı indirir.',
+    };
+    hud.showNotification(powerNames[power]);
+  },
+  () => {
+    soundEngine.playButtonClick();
+    spellbookModal.show();
+  },
+  (speed) => {
+    soundEngine.playButtonClick();
+    timeScale = speed;
+    weatherSystem.isPaused = speed === 0;
+    weatherSystem.timeScale = speed;
+  }
+);
+
+// Raycasting for Follower Click Selection
+const raycaster = new THREE.Raycaster();
+const mouse = new THREE.Vector2();
+
+renderer.domElement.addEventListener('click', (event) => {
+  const rect = renderer.domElement.getBoundingClientRect();
+  mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+  mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+  raycaster.setFromCamera(mouse, camera);
+  const intersects = raycaster.intersectObjects(followerSystem.followerMeshes, true);
+
+  if (intersects.length > 0) {
+    let obj = intersects[0].object;
+    while (obj && !obj.userData.followerIndex && obj.userData.followerIndex !== 0 && obj.parent) {
+      obj = obj.parent;
+    }
+    if (obj && (obj.userData.followerIndex || obj.userData.followerIndex === 0)) {
+      const idx = obj.userData.followerIndex;
+      const follower = followerSystem.followers[idx];
+      followerInspector.inspect(follower);
+      soundEngine.playButtonClick();
+      return;
+    }
+  }
+});
+
+// Pointer click handler for miracles
 renderer.domElement.addEventListener('pointerdown', (event) => {
-  if (event.button !== 0) return; // Only left click for miracles
+  soundEngine._ensureContext();
+  if (event.button !== 0) return;
   if (!godHand.handMesh.visible) return;
 
   const targetPoint = godHand.handMesh.position.clone();
-  targetPoint.y -= 1.2; // Terrain surface point
+  targetPoint.y -= 1.2;
 
-  if (godHand.activePower === 'rain') {
-    if (faithSystem.faith >= 15 || faithSystem.faith === 0) {
-      miracleSystem.castRainAt(targetPoint);
-      faithSystem.addFaith(10);
-      hud.showNotification("Bereket Yağmuru indirildi! Toprak canlanıyor.");
-    } else {
-      hud.showNotification("Yetersiz İnanç! Yağmur için 15 inanç puanı gerekli.");
-    }
+  if (godHand.activePower === 'sculpt') {
+    soundEngine.playSculptRumble();
+  } else if (godHand.activePower === 'rain') {
+    miracleSystem.castRainAt(targetPoint);
+    faithSystem.addFaith(10);
+    resourceSystem.addFood(15);
+    hud.showNotification("Bereket Yağmuru indirildi! Toprak canlanıyor.");
   } else if (godHand.activePower === 'sun') {
     miracleSystem.castSunbeamAt(targetPoint);
     faithSystem.addFaith(15);
@@ -111,13 +172,23 @@ renderer.domElement.addEventListener('pointerdown', (event) => {
     miracleSystem.castFireAt(targetPoint);
     faithSystem.addFaith(25);
     hud.showNotification("İlahi Ateş gazabı indirildi!");
+  } else if (godHand.activePower === 'meteor') {
+    miracleSystem.castMeteorAt(targetPoint);
+    faithSystem.addFaith(40);
+    hud.showNotification("Gökyüzünden devasa bir göktaşı indirildi!");
   } else if (godHand.activePower === 'bless') {
-    const hut = buildingSystem.buildHutAt(targetPoint.x, targetPoint.z);
-    if (hut) {
-      faithSystem.addFaith(30);
-      hud.showNotification("Köylüler senin adına yeni bir kulübe inşa etti!");
+    if (resourceSystem.canAfford({ wood: 10 })) {
+      const hut = buildingSystem.buildHutAt(targetPoint.x, targetPoint.z);
+      if (hut) {
+        resourceSystem.consume({ wood: 10 });
+        faithSystem.addFaith(30);
+        farmSystem.createFarmPlot(targetPoint.x + 2, targetPoint.z + 2);
+        hud.showNotification("Köylüler yeni bir kulübe ve buğday tarlası kurdu!");
+      } else {
+        hud.showNotification("Kulübe için karada ve uygun bir alan seçmelisin.");
+      }
     } else {
-      hud.showNotification("Kulübe için düz ve karada bir alan seçmelisin.");
+      hud.showNotification("Yetersiz odun! Kulübe için 10 odun gerekli.");
     }
   }
 });
@@ -129,30 +200,53 @@ window.addEventListener('resize', () => {
 });
 
 const clock = new THREE.Clock();
+const initialCamPos = camera.position.clone();
 
 function animate() {
   requestAnimationFrame(animate);
-  const dt = Math.min(clock.getDelta(), 0.1);
+  const rawDt = clock.getDelta();
+  const dt = Math.min(rawDt, 0.1) * timeScale;
   const time = clock.getElapsedTime();
 
   cameraRig.update();
-  ocean.update(time);
-  environment.update(time);
-  buildingSystem.update(dt);
-  followerSystem.update(dt);
-  miracleSystem.update(dt);
 
-  // Shrine position update on terrain sculpt
-  shrineMesh.position.y = terrain.getHeightAt(0, 0) + 1.1;
+  // Screen shake application
+  if (miracleSystem.screenShakeIntensity > 0) {
+    const shake = miracleSystem.screenShakeIntensity;
+    camera.position.x += (Math.random() * 2 - 1) * shake;
+    camera.position.y += (Math.random() * 2 - 1) * shake;
+  }
 
-  const worshippers = followerSystem.getWorshipperCount();
-  faithSystem.tick(worshippers, dt);
+  if (timeScale > 0) {
+    weatherSystem.update(dt);
+    ocean.update(time);
+    environment.update(time);
+    farmSystem.update(dt);
+    buildingSystem.update(dt);
+    followerSystem.update(dt);
+    miracleSystem.update(dt);
+
+    // Dynamic resource collection
+    resourceSystem.addWood(dt * 0.1);
+    resourceSystem.addFood(dt * 0.15);
+
+    // Shrine position update on terrain sculpt
+    shrineMesh.position.y = terrain.getHeightAt(0, 0) + 1.1;
+
+    const worshippers = followerSystem.getWorshipperCount();
+    faithSystem.tick(worshippers, dt);
+  }
 
   hud.update({
     faith: faithSystem.faith,
     population: followerSystem.getPopulation(),
-    worshippers,
-    hutCount: buildingSystem.getHutCount(),
+    worshippers: followerSystem.getWorshipperCount(),
+    resources: {
+      wood: resourceSystem.wood,
+      food: resourceSystem.food,
+      stone: resourceSystem.stone,
+    },
+    timeString: weatherSystem.getTimeFormatted(),
   });
 
   renderer.render(scene, camera);
