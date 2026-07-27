@@ -54,8 +54,22 @@ export class TerrainSystem {
 
     this.geometry = new THREE.PlaneGeometry(worldSize, worldSize, gridSize - 1, gridSize - 1);
     this.geometry.rotateX(-Math.PI / 2);
-    this.material = new THREE.MeshStandardMaterial({ color: 0x4a7c3a, flatShading: true });
+
+    // Initialize vertex color attribute
+    const count = this.geometry.attributes.position.count;
+    const colors = new Float32Array(count * 3);
+    this.geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+    this.material = new THREE.MeshStandardMaterial({
+      vertexColors: true,
+      flatShading: true,
+      roughness: 0.8,
+      metalness: 0.1,
+    });
+
     this.mesh = new THREE.Mesh(this.geometry, this.material);
+    this.mesh.receiveShadow = true;
+    this.mesh.castShadow = true;
 
     this._syncGeometryFromHeightmap();
   }
@@ -68,10 +82,40 @@ export class TerrainSystem {
 
   _syncGeometryFromHeightmap() {
     const position = this.geometry.attributes.position;
+    const colorAttr = this.geometry.attributes.color;
+
     for (let i = 0; i < this.heightmap.length; i++) {
-      position.setY(i, this.heightmap[i] * 5);
+      const h = this.heightmap[i] * 5;
+      position.setY(i, h);
+
+      // Stylized Painterly Palette:
+      // Sand (< 0.7m), Lush Grass (0.7m - 4.5m), Forest Green (4.5m - 6.5m), Rock (6.5m - 8.5m), Snow (> 8.5m)
+      let r, g, b;
+      if (h < 0.7) {
+        // Sand / Beach
+        r = 0.88; g = 0.76; b = 0.53;
+      } else if (h < 4.2) {
+        // Lush Grass
+        const t = (h - 0.7) / 3.5;
+        r = 0.33 + t * 0.05;
+        g = 0.65 + t * 0.1;
+        b = 0.25 - t * 0.05;
+      } else if (h < 6.8) {
+        // Darker Mountain Forest
+        r = 0.22; g = 0.48; b = 0.20;
+      } else if (h < 8.2) {
+        // Cliff / Mountain Rock
+        r = 0.48; g = 0.49; b = 0.52;
+      } else {
+        // Snow Peak
+        r = 0.94; g = 0.95; b = 0.98;
+      }
+
+      colorAttr.setXYZ(i, r, g, b);
     }
+
     position.needsUpdate = true;
+    colorAttr.needsUpdate = true;
     this.geometry.computeVertexNormals();
   }
 
