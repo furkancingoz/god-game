@@ -1,11 +1,12 @@
 import { formatFaith } from '../faith/FaithSystem.js';
 
 export class HUD {
-  constructor(container, onSelectPower, onOpenSpellbook, onSpeedChange) {
+  constructor(container, onSelectPower, onOpenSpellbook, onSpeedChange, onOpenReligion) {
     this.container = container;
     this.onSelectPower = onSelectPower;
     this.onOpenSpellbook = onOpenSpellbook;
     this.onSpeedChange = onSpeedChange;
+    this.onOpenReligion = onOpenReligion;
     this.activePower = 'sculpt';
 
     this.container.innerHTML = `
@@ -52,6 +53,7 @@ export class HUD {
           </div>
         </div>
 
+        <button class="hud-card spellbook-btn" id="open-religion" title="Din & Peygamber Gelişimi (Plague Inc)">☣️</button>
         <button class="hud-card spellbook-btn" id="open-spellbook" title="Mucize Kitabı">📖</button>
       </div>
 
@@ -126,6 +128,11 @@ export class HUD {
         const speed = parseFloat(btn.getAttribute('data-speed'));
         if (this.onSpeedChange) this.onSpeedChange(speed);
       });
+    });
+
+    // Open Religion Evolution (Plague Inc mode)
+    this.container.querySelector('#open-religion').addEventListener('click', () => {
+      if (this.onOpenReligion) this.onOpenReligion();
     });
 
     // Open Spellbook

@@ -17,6 +17,9 @@ import { soundEngine } from './audio/SoundEngine.js';
 import { HUD } from './ui/HUD.js';
 import { FollowerInspector } from './ui/FollowerInspector.js';
 import { SpellbookModal } from './ui/SpellbookModal.js';
+import { ProphetSkillTree } from './faith/ProphetSystem.js';
+import { ReligionTransmission } from './faith/ReligionTransmission.js';
+import { ReligionEvolutionModal } from './ui/ReligionEvolutionModal.js';
 
 // Setup Scene & Atmosphere
 const scene = new THREE.Scene();
@@ -90,6 +93,22 @@ const followerInspector = new FollowerInspector(document.body, (follower) => {
   hud.showNotification(`${follower.name} köylüsü senin ilahi PEYGAMBERİN ilan edildi! ✨`);
 });
 
+const prophetSkillTree = new ProphetSkillTree();
+const religionTransmission = new ReligionTransmission();
+
+const religionEvolutionModal = new ReligionEvolutionModal(document.body, prophetSkillTree, (skillId) => {
+  const result = prophetSkillTree.unlockSkill(skillId, faithSystem.faith);
+  if (result.success) {
+    faithSystem.addFaith(-result.skill.cost);
+    soundEngine.playMiracleChime();
+    hud.showNotification(`DİN DOKTRİNİ AÇILDI: ${result.skill.name}! ✨`);
+    religionEvolutionModal.render();
+  } else {
+    soundEngine.playButtonClick();
+    hud.showNotification(`Kilit Açma Başarısız: ${result.reason}`);
+  }
+});
+
 const spellbookModal = new SpellbookModal(document.body);
 
 let timeScale = 1.0;
@@ -118,6 +137,11 @@ const hud = new HUD(
     timeScale = speed;
     weatherSystem.isPaused = speed === 0;
     weatherSystem.timeScale = speed;
+  },
+  () => {
+    soundEngine.playButtonClick();
+    religionEvolutionModal.updateStats(religionTransmission.getStats());
+    religionEvolutionModal.show();
   }
 );
 
@@ -238,6 +262,8 @@ function animate() {
 
     const worshippers = followerSystem.getWorshipperCount();
     faithSystem.tick(worshippers, dt);
+    religionTransmission.update(dt, prophetSkillTree, worshippers);
+    religionEvolutionModal.updateStats(religionTransmission.getStats());
   }
 
   hud.update({
